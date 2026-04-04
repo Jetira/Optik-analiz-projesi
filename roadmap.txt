@@ -1,0 +1,161 @@
+============================================================
+  OPTİK OKUYUCU MOBİL UYGULAMA - ROADMAP v2
+============================================================
+
+Proje: Flutter mobil app + Python/FastAPI backend
+Amaç: Telefon kamerasıyla sınav kağıdı okuma, otomatik notlama, Excel çıktısı
+Repo adı: optical-reader
+
+============================================================
+FAZ 0 — PROJE İSKELETİ
+============================================================
+- Flutter projesi oluştur (optical_reader)
+- Python backend projesi oluştur (FastAPI)
+- Klasör yapısı: backend/ ve mobile/ ayrı
+- requirements.txt: fastapi, uvicorn, opencv-python, pyzbar, pytesseract, openpyxl, pillow, qrcode, numpy
+- Flutter dependencies: camera, image_picker, http, dio, path_provider, share_plus, fl_chart
+- Backend'de /health endpoint ile bağlantı testi
+- Flutter'dan backend'e ping atıp bağlantı doğrula
+- Flutter ayarlar ekranında backend IP/port girişi (local network için)
+- Git init + .gitignore
+
+============================================================
+FAZ 1 — SINAV KAĞIDI TEMPLATE OLUŞTURUCU
+============================================================
+- Python script: sinav_template_generator.py
+- Girdi parametreleri:
+  * Sınav adı
+  * Soru sayısı (1-100 arası)
+  * Şık sayısı (4 veya 5)
+  * Her sorunun puanı (liste veya tek değer)
+  * Grup sayısı (1-4, varsayılan 1)
+  * Grup harfi (A, B, C, D)
+- 4 köşeye QR kod yerleştir
+  * QR metadata: {"sinav_id", "soru_sayisi", "sik_sayisi", "grup": "A", "versiyon": 1}
+  * Her grup için ayrı template üretilir (QR içindeki grup bilgisi farklı)
+- Öğrenci ad/numara yazma alanı (üst kısım, çerçeveli)
+- Sınav adı + Grup harfi (büyük, görünür şekilde) yazdır
+- Bubble grid oluştur (soru numarası + A/B/C/D/E daireler)
+- Çıktı: PNG veya PDF (yazdırılabilir A4)
+- Çoklu grup üretimi: tek komutla A,B,C,D gruplarının hepsini üret
+- Test: 20 soruluk 4 şık 2 grup ve 40 soruluk 5 şık 4 grup template üret
+
+============================================================
+FAZ 2 — BACKEND: GÖRÜNTÜ İŞLEME PİPELINE
+============================================================
+- /api/scan endpoint (POST, image upload)
+- Adım 0: Flutter tarafında gönderim öncesi image resize (1200-1600px genişlik, JPEG quality 80, ~200-400KB)
+- Adım 1: QR kod tespiti (pyzbar) → 4 köşe QR'ı bul
+- Adım 2: 4 QR'ın pozisyonlarından perspektif düzeltme (cv2.getPerspectiveTransform + warpPerspective)
+- Adım 3: QR metadata'yı decode et (sinav_id, soru_sayisi, sik_sayisi, grup)
+- Adım 4: Bubble grid bölgesini crop et
+- Adım 5: Her satır (soru) için bubble'ları tespit et
+  * Grayscale → Gaussian blur → Adaptive threshold
+  * Contour detection → bubble pozisyonlarını bul
+  * Her bubble'ın doluluk oranını hesapla (pixel sayımı)
+  * En yüksek doluluk = işaretli şık
+  * Eşik altı = boş, birden fazla eşik üstü = geçersiz
+- Adım 6: Sonuç JSON döndür: {grup: "A", cevaplar: [{soru: 1, cevap: "A"}, ...]}
+- Test: template üzerinde elle işaretlenmiş kağıtları tara, doğruluğu kontrol et
+
+============================================================
+FAZ 3 — BACKEND: OCR + PUANLAMA
+============================================================
+- Öğrenci ad/no alanını crop et (perspektif düzeltme sonrası sabit koordinat)
+- Tesseract OCR ile metin oku (lang=tur)
+- Temizle: gereksiz boşluk, özel karakter
+- Cevap anahtarı endpoint: /api/answer-key (POST)
+  * Girdi: {sinav_id, grup: "A", cevaplar: ["A","B","C",...], puanlar: [5,5,10,...]}
+  * Her grup için ayrı cevap anahtarı kaydedilebilir
+  * Veritabanına veya belleğe kaydet
+- Puanlama: /api/grade (POST)
+  * QR'dan okunan grup bilgisine göre doğru cevap anahtarını seç
+  * Her soru: doğru (tam puan), yanlış (0), boş (0)
+  * Toplam puan hesapla
+  * Sonuç: {ogrenci_ad, ogrenci_no, grup, soru_detay: [...], toplam_puan, maks_puan}
+
+============================================================
+FAZ 4 — FLUTTER: MOBİL UYGULAMA
+============================================================
+- Splash + Ana ekran
+- Ekranlar:
+  1. Sınav oluştur: ad, soru sayısı, şık sayısı, soru puanları, grup sayısı
+  2. Cevap anahtarı gir: her grup için ayrı tab/sayfa
+  3. Kamera/Galeri ekranı: kameradan çek VEYA galeriden seç (tek + toplu mod)
+  4. Sonuç ekranı: öğrenci bilgisi, grup, soru bazlı doğru/yanlış, toplam puan
+  5. Tarama geçmişi: sınav bazlı gruplandırılmış liste
+  6. İstatistik ekranı: soru bazlı analiz + sınıf istatistikleri
+  7. Ayarlar: backend IP/port, tema
+- Toplu tarama modu:
+  * Kameradan çek VEYA galeriden çoklu seç → Flutter'da resize (1200-1600px, JPEG q80) → backend'e gönder → sonuç toast/badge
+  * Beklenen hız: kağıt başı ~2-3sn (30 kağıt ≈ 1.5dk)
+  * Hemen sonraki kağıda geç (onay ekranı yok)
+  * Tarama bittikten sonra toplu sonuç listesi göster
+  * Hatalı okumalar ayrı işaretle (QR okunamadı, bubble belirsiz)
+- Kamera: camera paketi + image_picker (galeri seçimi için)
+- Görüntü kaynağı seçimi: alt sheet veya toggle → Kamera / Galeri
+- State management: Riverpod
+- Backend haberleşme: Dio
+
+============================================================
+FAZ 5 — EXCEL EXPORT + İSTATİSTİK
+============================================================
+- Backend: openpyxl ile .xlsx oluştur
+- Endpoint: /api/export/{sinav_id}
+- Excel Sheet 1 — Sonuçlar:
+  * Başlık: Öğrenci Adı | Öğrenci No | Grup | S1 (5p) | S2 (5p) | ... | Toplam | Maks
+  * Her öğrenci bir satır
+  * Doğru = şık harfi (yeşil), Yanlış = şık harfi (kırmızı), Boş = "-"
+  * Gruplara göre sıralı veya filtrelenebilir
+- Excel Sheet 2 — İstatistikler:
+  * Sınıf ortalaması, medyan, en yüksek, en düşük, standart sapma
+  * Soru bazlı doğru oranı (S1: %85, S2: %40...)
+  * Soru bazlı şık dağılımı (S1 → A: %15, B: %60, C: %20, D: %5)
+  * Grup bazlı ortalama karşılaştırma
+  * En çok yanlış yapılan soru TOP 5
+- Endpoint: /api/stats/{sinav_id}
+  * App içi istatistik ekranı için JSON döndür
+- Flutter: istatistik ekranında basit bar chart / pie chart (fl_chart)
+- Flutter: export butonu → .xlsx indir → cihaza kaydet / paylaş
+
+============================================================
+FAZ 6 — TEST + POLİSH
+============================================================
+- Farklı açılardan çekilmiş kağıtlarda doğruluk testi
+- Karanlık/aydınlık ortam testi
+- Buruşuk/eğri kağıt testi
+- Hata yönetimi: QR bulunamazsa, bubble okunamazsa kullanıcıya uyarı
+- Loading state'ler, hata mesajları, skeleton loading
+- Toplu tarama hız testi (30 kağıt art arda)
+- UI polish
+- Demo video hazırla (hocaya göstermek için)
+
+============================================================
+TEKNOLOJİ STACK
+============================================================
+Backend:  Python 3.11+, FastAPI, OpenCV, pyzbar, pytesseract, openpyxl, qrcode, numpy, Pillow
+Frontend: Flutter, Dart, Riverpod, Dio, camera, go_router, path_provider, share_plus, fl_chart
+Haberleşme: REST API (JSON + multipart file upload)
+Deployment: Local network (laptop'ta FastAPI, telefon aynı WiFi'den bağlanır)
+
+============================================================
+DEPLOYMENT NOTU
+============================================================
+Demo/sunum senaryosu:
+- Laptop'ta backend çalışır: uvicorn main:app --host 0.0.0.0 --port 8000
+- Telefon ve laptop aynı WiFi ağında
+- Flutter app ayarlarından laptop'un local IP'si girilir (örn: 192.168.1.x:8000)
+- İleride: VPS'e deploy edilebilir (opsiyonel, demo için gerek yok)
+
+============================================================
+TAHMİNİ SÜRE
+============================================================
+Faz 0: 1 saat
+Faz 1: 3-4 saat (grup desteği eklendi)
+Faz 2: 4-6 saat (en kritik faz)
+Faz 3: 3-4 saat (grup bazlı puanlama)
+Faz 4: 6-8 saat (toplu tarama modu eklendi)
+Faz 5: 3-4 saat (istatistik sheet + app içi grafik)
+Faz 6: 2-4 saat
+────────────────
+TOPLAM: ~22-31 saat (vibe-coding ile daha hızlı)

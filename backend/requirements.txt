@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+opencv-python
+pyzbar
+google-generativeai
+openpyxl
+pillow
+qrcode
+numpy
+python-multipart
